@@ -13,23 +13,20 @@ class NTMAddressing(object):
     def __init__(self, input_sizes,
                        memory_locations,
                        memory_size,
-                       shift_mask='local'):
+                       shift_type='local'):
         self.memory_locations = memory_locations
+        self.shift_type       = shift_type
 
         self.content_key          = D.StackedInputLayer(input_sizes, memory_size)
         self.content_key_strength = D.StackedInputLayer(input_sizes, 1)
         self.interpolation        = D.StackedInputLayer(input_sizes, 1)
-        self.shift                = D.StackedInputLayer(input_sizes, memory_locations)
         self.focus                = D.StackedInputLayer(input_sizes, 1)
 
-        self.shift_mask = np.zeros((1, memory_locations))
-        if shift_mask == 'local':
-            self.shift_mask[0, 0] = 1
-            self.shift_mask[0, 1] = 1
-            self.shift_mask[0, -1] = 1
+
+        if shift_type == 'local':
+            self.shift = D.StackedInputLayer(input_sizes, 3)
         else:
-            raise Exception("Unknown shift mask type: %s" % (shift_mask,))
-        self.shift_mask = D.Mat(self.shift_mask)
+            raise Exception("Unknown shift mask type: %s" % (shift_type,))
 
         self.initial_locations = D.random.uniform(-0.1, 0.1, (1,self.memory_locations))
 
@@ -53,11 +50,19 @@ class NTMAddressing(object):
         return D.MatOps.softmax(presoftmax)
 
     def shift_activation(self, inputs, weights):
-        shift                = D.MatOps.softmax(self.shift.activate(inputs))
-        shift                = shift * self.shift_mask
-        shift                = shift / (shift.sum() + 1e-6)
+        shift                = D.MatOps.softmax(self.shift.activate(inputs)).T()
 
-        return D.MatOps.circular_convolution(weights, shift)
+        if self.shift_type == 'local':
+            full_shift = D.MatOps.hstack([
+                shift[0],
+                shift[1],
+                D.Mat.zeros((1, self.memory_locations - 3)),
+                shift[2]
+            ])
+        else:
+            assert False
+
+        return D.MatOps.circular_convolution(weights, full_shift)
 
     def address(self, inputs, memory, state):
         """Outputs memory location weights.
